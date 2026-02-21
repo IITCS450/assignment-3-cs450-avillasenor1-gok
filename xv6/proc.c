@@ -7,6 +7,26 @@
 #include "proc.h"
 #include "spinlock.h"
 
+
+
+
+
+static unsigned long random_seed= 32437;
+
+static unsigned long lcg_random(void){
+	random_seed = (1103515245 * random_seed + 12345) & 0x7fffffff;
+	return random_seed;
+	
+
+}
+
+// ---linear congruential generator 
+// mask to make sure random_seed is non negative.
+
+
+
+
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -112,8 +132,41 @@ found:
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
 
+  p->tickets=1;
+
+
+  p->lottery_wins=0;
+
   return p;
 }
+
+
+
+//added new function -----------------------------------------------------------------
+int settickets(int n){
+	
+	if(n<1){
+		return -1;
+	}
+	acquire(&ptable.lock);
+	myproc()->tickets =n;
+	release(&ptable.lock);
+
+
+
+
+	return 0;
+
+}
+
+
+
+
+
+
+
+
+
 
 //PAGEBREAK: 32
 // Set up first user process.
@@ -319,41 +372,110 @@ wait(void)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
-void
-scheduler(void)
-{
-  struct proc *p;
-  struct cpu *c = mycpu();
-  c->proc = 0;
+
+
+
+//void
+//scheduler(void)
+//{
+ // struct proc *p;
+ // struct cpu *c = mycpu();
+  //c->proc = 0;
   
-  for(;;){
+ // for(;;){
     // Enable interrupts on this processor.
-    sti();
+    //sti();
 
     // Loop over process table looking for process to run.
-    acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
+   // acquire(&ptable.lock);
+   // for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      //if(p->state != RUNNABLE)
+       // continue;
 
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
+     // c->proc = p;
+     // switchuvm(p);
+      //p->state = RUNNING;
 
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
+      //swtch(&(c->scheduler), p->context);
+    //  switchkvm();
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
-      c->proc = 0;
-    }
-    release(&ptable.lock);
+  //    c->proc = 0;
+//    }
+   // release(&ptable.lock);
 
-  }
+ // }
+//}
+
+//-------------Lottery Scheduler replacement
+
+
+void
+scheduler(void){
+
+	struct proc *p;
+	struct cpu *c = mycpu();
+	c->proc = 0;
+	
+
+	for(;;){
+		sti();
+		acquire(&ptable.lock);
+
+		int total_tickets = 0;
+
+		for(p=ptable.proc;p<&ptable.proc[NPROC];p++){
+			if(p->state==RUNNABLE)
+				total_tickets +=p->tickets;
+		}
+
+		if(total_tickets ==0){
+			release(&ptable.lock);
+			continue;
+		}
+
+
+		int winning_ticket = lcg_random()%total_tickets;
+
+		int current_sum = 0;
+
+		for(p=ptable.proc;p<&ptable.proc[NPROC];p++){
+			if(p->state !=RUNNABLE)
+				continue;
+			current_sum +=p->tickets;
+			if(current_sum>winning_ticket){
+				p->lottery_wins++;
+				
+				c->proc=p;
+				switchuvm(p);
+				p->state=RUNNING;
+
+				swtch(&(c->scheduler), p->context);
+				switchkvm();
+
+				c->proc=0;
+				break;
+		
+		
+			}
+		
+		
+
+		}
+		release(&ptable.lock);
+
+	}
 }
+
+
+
+
+
+
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
